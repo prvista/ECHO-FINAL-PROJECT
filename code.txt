@@ -2,3 +2,9 @@ cd C:\Users\vista\Downloads\echo final
 .\venv\Scripts\activate
 Remove-Item Env:http_proxy
 python .\agent.py dev
+
+
+
+
+.\venv\Scripts\activate
+python .\agent.py dev

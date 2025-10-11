@@ -1,0 +1,124 @@
+import os
+import asyncio
+from dotenv import load_dotenv
+from livekit import agents
+from livekit.agents import JobContext
+from prompts import AGENT_INSTRUCTION, SESSION_INSTRUCTION
+from tools import get_weather, search_web, send_email, open_app, set_reminder, greet_user
+
+# ======================================================
+# === ENVIRONMENT SETUP ==============================
+# ======================================================
+
+# Clear invalid proxies
+for var in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "PROXY"]:
+    os.environ.pop(var, None)
+
+ROOT_DIR = os.path.dirname(__file__)
+ENV_PATH = os.path.join(ROOT_DIR, ".env")
+
+if os.path.exists(ENV_PATH):
+    load_dotenv(ENV_PATH)
+    print(f"✅ Environment loaded: {ENV_PATH}")
+else:
+    raise FileNotFoundError(f"❌ Could not find .env at {ENV_PATH}")
+
+LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY")
+LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+
+# ======================================================
+# === ECHO ASSISTANT CLASS ===========================
+# ======================================================
+
+class EchoAssistant:
+    def __init__(self, session):
+        self.session = session
+
+    async def handle_voice(self, transcript: str):
+        cmd = transcript.lower()
+        print(f"[🎤 VOICE INPUT] {cmd}")
+
+        response = "I'm not sure what you mean, sir."
+
+        try:
+            if cmd.startswith("open "):
+                app_name = cmd.replace("open ", "").strip()
+                response = f"Opening {app_name}..."
+                await self.session.speak(response)
+                await open_app(None, app_name)
+
+            elif "weather" in cmd:
+                response = "Fetching weather report..."
+                await self.session.speak(response)
+                city = cmd.replace("weather in ", "").strip()
+                result = await get_weather(None, city)
+                await self.session.speak(result)
+
+            elif "search for" in cmd:
+                response = "Searching the web..."
+                await self.session.speak(response)
+                query = cmd.replace("search for ", "").strip()
+                result = await search_web(None, query)
+                await self.session.speak("Here’s what I found: " + result[:200] + "...")
+
+            elif "send email" in cmd:
+                await self.session.speak("Please use the email form in the dashboard for now.")
+
+            elif "remind me to" in cmd:
+                try:
+                    task_part = cmd.split(" in ")[0].replace("remind me to ", "").strip()
+                    minutes = int(cmd.split(" in ")[1].replace(" minutes", "").strip())
+                    await set_reminder(None, task_part, minutes)
+                    await self.session.speak(f"Got it. I'll remind you in {minutes} minutes.")
+                except Exception:
+                    await self.session.speak("Sorry, I couldn’t understand your reminder format.")
+
+            elif "hello" in cmd or "hi" in cmd:
+                result = await greet_user(None)
+                await self.session.speak(result)
+
+            else:
+                await self.session.speak(response)
+
+        except Exception as e:
+            print("[❌ ERROR] Voice processing failed:", e)
+            await self.session.speak("Sorry, something went wrong while processing your command.")
+
+# ======================================================
+# === LIVEKIT ENTRYPOINT =============================
+# ======================================================
+
+async def entrypoint(ctx: JobContext):
+    print("🚀 ECHO Assistant is running...")
+
+    # Connect to the LiveKit room correctly (v1.2.14 API)
+    session = await ctx.session()  # <- Correct for v1.2.14
+
+    echo = EchoAssistant(session)
+
+    # Greeting
+    await session.speak("System check complete. Hello sir, ECHO is now online.")
+
+    # Continuous listening loop
+    async for participant, audio_data in session.listen_stream():
+        try:
+            # For now, using simple text transcription (replace with Google/other model later)
+            transcript = audio_data.decode("utf-8") if isinstance(audio_data, bytes) else str(audio_data)
+            if transcript:
+                await echo.handle_voice(transcript)
+        except Exception as e:
+            print("[STREAM ERROR]", e)
+
+# ======================================================
+# === MAIN ===========================================
+# ======================================================
+
+if __name__ == "__main__":
+    agents.cli.run_app(
+        agents.WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            api_key=LIVEKIT_API_KEY,
+            api_secret=LIVEKIT_API_SECRET,
+        )
+    )

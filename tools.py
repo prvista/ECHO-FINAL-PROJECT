@@ -1,8 +1,6 @@
-# tools.py
 import logging
 from livekit.agents import function_tool, RunContext
 import requests
-from langchain_community.tools import DuckDuckGoSearchRun
 import os
 import smtplib
 from email.mime.multipart import MIMEMultipart  
@@ -12,6 +10,8 @@ import subprocess
 from datetime import datetime, timedelta
 import threading
 import asyncio
+import webbrowser
+from urllib.parse import quote_plus
 
 # --- Open Apps ---
 @function_tool()
@@ -26,16 +26,24 @@ async def open_app(
         "notepad": r"C:\Windows\System32\notepad.exe",
         "calculator": r"C:\Windows\System32\calc.exe",
         "chrome": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        # Add more apps here
+        "vscode": r"C:\Users\%USERNAME%\AppData\Local\Programs\Microsoft VS Code\Code.exe",
+        "edge": r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        "word": r"C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE",
+        "excel": r"C:\Program Files\Microsoft Office\root\Office16\EXCEL.EXE",
     }
+
+    # Expand environment variables (like %USERNAME%)
+    for key, path in apps.items():
+        apps[key] = os.path.expandvars(path)
+
     path = apps.get(app_name.lower())
     if not path:
-        return f"App '{app_name}' not recognized."
+        return f"App '{app_name}' not recognized or not configured."
 
     try:
         subprocess.Popen([path])
         logging.info(f"App '{app_name}' opened successfully")
-        return f"{app_name} opened successfully!"
+        return f"{app_name.title()} opened successfully!"
     except Exception as e:
         logging.error(f"Failed to open {app_name}: {e}")
         return f"Failed to open {app_name}: {e}"
@@ -45,7 +53,7 @@ reminders = []
 
 @function_tool()
 async def set_reminder(
-    context: RunContext,  # type: ignore
+    context: RunContext,  # type: ignore,
     task: str,
     minutes: int
 ) -> str:
@@ -58,7 +66,7 @@ async def set_reminder(
     def reminder_checker(task, reminder_time):
         while datetime.now() < reminder_time:
             pass
-        print(f"[REMINDER] {task}")  # Could be replaced with LiveKit TTS
+        print(f"[REMINDER] {task}")
     
     threading.Thread(target=reminder_checker, args=(task, reminder_time), daemon=True).start()
     logging.info(f"Reminder set: '{task}' in {minutes} minutes")
@@ -67,7 +75,7 @@ async def set_reminder(
 # --- Personalized Greeting ---
 @function_tool()
 async def greet_user(
-    context: RunContext,  # type: ignore
+    context: RunContext,  # type: ignore,
     user_name: str = "User"
 ) -> str:
     """
@@ -80,45 +88,81 @@ async def greet_user(
 # --- Web Search ---
 @function_tool()
 async def search_web(
-    context: RunContext,  # type: ignore
+    context: RunContext,  # type: ignore,
     query: str
 ) -> str:
     """
-    Search the web using DuckDuckGo.
+    Search the web using Google Chrome browser.
+    Opens a new Chrome tab with the search query.
     """
     try:
-        results = DuckDuckGoSearchRun().run(tool_input=query)
-        logging.info(f"Search results for '{query}': {results}")
-        return results
-    except Exception as e:
-        logging.error(f"Error searching the web for '{query}': {e}")
-        return f"An error occurred while searching the web for '{query}'."
+        encoded_query = quote_plus(query)
+        search_url = f"https://www.google.com/search?q={encoded_query}"
 
-# --- Get Weather ---
+        chrome_paths = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        ]
+
+        chrome_path = next((p for p in chrome_paths if os.path.exists(p)), None)
+        if chrome_path:
+            webbrowser.register('chrome', None, webbrowser.BackgroundBrowser(chrome_path))
+            webbrowser.get('chrome').open_new_tab(search_url)
+            logging.info(f"Opened Chrome search for: {query}")
+            return f"Searching the web for '{query}' using Chrome..."
+        else:
+            webbrowser.open(search_url)
+            logging.warning("Chrome not found — using default browser instead.")
+            return f"Chrome not found. Searching the web for '{query}' using default browser."
+
+    except Exception as e:
+        logging.error(f"Error opening Chrome for '{query}': {e}")
+        return f"Failed to search the web: {e}"
+
+# --- Get Weather (wttr.in JSON API) ---
 @function_tool()
 async def get_weather(
-    context: RunContext,  # type: ignore
-    city: str
+    context: RunContext,  # type: ignore,
+    city: str = "Manila"
 ) -> str:
     """
-    Get the current weather for a given city.
+    Get the current weather for a given city using the wttr.in JSON API.
+    No API key required.
     """
     try:
-        response = requests.get(f"https://wttr.in/{city}?format=3")
-        if response.status_code == 200:
-            logging.info(f"Weather for {city}: {response.text.strip()}")
-            return response.text.strip()   
-        else:
-            logging.error(f"Failed to get weather for {city}: {response.status_code}")
+        url = f"https://wttr.in/{city}?format=j1"
+        response = requests.get(url, timeout=10)
+
+        if response.status_code != 200:
+            logging.error(f"Weather API error {response.status_code}: {response.text}")
             return f"Could not retrieve weather for {city}."
+
+        data = response.json()
+        current = data["current_condition"][0]
+        
+        weather_desc = current["weatherDesc"][0]["value"]
+        temp_c = current["temp_C"]
+        feels_like = current["FeelsLikeC"]
+        humidity = current["humidity"]
+        wind_kph = current["windspeedKmph"]
+
+        report = (
+            f"The current weather in {city} is {weather_desc}. "
+            f"Temperature: {temp_c}°C (feels like {feels_like}°C). "
+            f"Humidity: {humidity}%. Wind speed: {wind_kph} km/h."
+        )
+
+        logging.info(f"Weather report for {city}: {report}")
+        return report
+
     except Exception as e:
         logging.error(f"Error retrieving weather for {city}: {e}")
-        return f"An error occurred while retrieving weather for {city}." 
+        return f"An error occurred while retrieving weather for {city}: {str(e)}"
 
-# --- Send Email ---
+# --- Send Email (Manual) ---
 @function_tool()    
 async def send_email(
-    context: RunContext,  # type: ignore
+    context: RunContext,  # type: ignore,
     to_email: str,
     subject: str,
     message: str,
@@ -169,6 +213,26 @@ async def send_email(
         logging.error(f"Error sending email: {e}")
         return f"An error occurred while sending email: {str(e)}"
 
+# --- Automated Email Scheduler ---
+@function_tool()
+async def schedule_email(
+    context: RunContext,  # type: ignore,
+    to_email: str,
+    subject: str,
+    message: str,
+    delay_minutes: int
+) -> str:
+    """
+    Schedule an email to be sent automatically after X minutes.
+    """
+    def delayed_send():
+        asyncio.run(send_email(context, to_email, subject, message))
+
+    timer = threading.Timer(delay_minutes * 60, delayed_send)
+    timer.start()
+    
+    logging.info(f"Scheduled email to {to_email} in {delay_minutes} minutes.")
+    return f"Email to {to_email} scheduled to send in {delay_minutes} minutes."
+
 # Debug print
-import os
 print("LIVEKIT_URL:", os.getenv("LIVEKIT_URL"))
