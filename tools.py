@@ -8,20 +8,27 @@ from email.mime.text import MIMEText
 from typing import Optional
 import subprocess
 from datetime import datetime, timedelta
-import threading
 import asyncio
 import webbrowser
 from urllib.parse import quote_plus
+import pickle
+import pytz
 
-# --- Open Apps ---
+# --- Google Calendar OAuth Imports ---
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+
+# --- Locate JSON Credentials ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CREDENTIALS_PATH = os.path.join(BASE_DIR, "client_secret.json")
+
+# ----------------------------------------------------------
+# OPEN APPLICATIONS
+# ----------------------------------------------------------
 @function_tool()
-async def open_app(
-    context: RunContext,  # type: ignore
-    app_name: str
-) -> str:
-    """
-    Open a Windows application by name.
-    """
+async def open_app(context: RunContext, app_name: str) -> str:
+    """Open a Windows application by name."""
     apps = {
         "notepad": r"C:\Windows\System32\notepad.exe",
         "calculator": r"C:\Windows\System32\calc.exe",
@@ -32,7 +39,6 @@ async def open_app(
         "excel": r"C:\Program Files\Microsoft Office\root\Office16\EXCEL.EXE",
     }
 
-    # Expand environment variables (like %USERNAME%)
     for key, path in apps.items():
         apps[key] = os.path.expandvars(path)
 
@@ -48,53 +54,22 @@ async def open_app(
         logging.error(f"Failed to open {app_name}: {e}")
         return f"Failed to open {app_name}: {e}"
 
-# --- Task Scheduling / Reminders ---
-reminders = []
-
+# ----------------------------------------------------------
+# PERSONALIZED GREETING
+# ----------------------------------------------------------
 @function_tool()
-async def set_reminder(
-    context: RunContext,  # type: ignore,
-    task: str,
-    minutes: int
-) -> str:
-    """
-    Set a reminder task with a time in minutes.
-    """
-    reminder_time = datetime.now() + timedelta(minutes=minutes)
-    reminders.append((task, reminder_time))
-
-    def reminder_checker(task, reminder_time):
-        while datetime.now() < reminder_time:
-            pass
-        print(f"[REMINDER] {task}")
-    
-    threading.Thread(target=reminder_checker, args=(task, reminder_time), daemon=True).start()
-    logging.info(f"Reminder set: '{task}' in {minutes} minutes")
-    return f"Reminder set for '{task}' in {minutes} minutes."
-
-# --- Personalized Greeting ---
-@function_tool()
-async def greet_user(
-    context: RunContext,  # type: ignore,
-    user_name: str = "User"
-) -> str:
-    """
-    Return a personalized greeting with number of reminders.
-    """
+async def greet_user(context: RunContext, user_name: str = "User") -> str:
+    """Return a personalized greeting."""
     now = datetime.now()
     greeting = "Good morning" if now.hour < 12 else "Good afternoon" if now.hour < 18 else "Good evening"
-    return f"{greeting}, {user_name}! You have {len(reminders)} reminders today."
+    return f"{greeting}, {user_name}! How can I assist you today?"
 
-# --- Web Search ---
+# ----------------------------------------------------------
+# WEB SEARCH
+# ----------------------------------------------------------
 @function_tool()
-async def search_web(
-    context: RunContext,  # type: ignore,
-    query: str
-) -> str:
-    """
-    Search the web using Google Chrome browser.
-    Opens a new Chrome tab with the search query.
-    """
+async def search_web(context: RunContext, query: str) -> str:
+    """Search the web using Google Chrome browser."""
     try:
         encoded_query = quote_plus(query)
         search_url = f"https://www.google.com/search?q={encoded_query}"
@@ -119,16 +94,12 @@ async def search_web(
         logging.error(f"Error opening Chrome for '{query}': {e}")
         return f"Failed to search the web: {e}"
 
-# --- Get Weather (wttr.in JSON API) ---
+# ----------------------------------------------------------
+# GET WEATHER
+# ----------------------------------------------------------
 @function_tool()
-async def get_weather(
-    context: RunContext,  # type: ignore,
-    city: str = "Manila"
-) -> str:
-    """
-    Get the current weather for a given city using the wttr.in JSON API.
-    No API key required.
-    """
+async def get_weather(context: RunContext, city: str = "Manila") -> str:
+    """Get the current weather using wttr.in JSON API."""
     try:
         url = f"https://wttr.in/{city}?format=j1"
         response = requests.get(url, timeout=10)
@@ -159,18 +130,12 @@ async def get_weather(
         logging.error(f"Error retrieving weather for {city}: {e}")
         return f"An error occurred while retrieving weather for {city}: {str(e)}"
 
-# --- Send Email (Manual) ---
+# ----------------------------------------------------------
+# SEND EMAIL
+# ----------------------------------------------------------
 @function_tool()    
-async def send_email(
-    context: RunContext,  # type: ignore,
-    to_email: str,
-    subject: str,
-    message: str,
-    cc_email: Optional[str] = None
-) -> str:
-    """
-    Send an email through Gmail.
-    """
+async def send_email(context: RunContext, to_email: str, subject: str, message: str, cc_email: Optional[str] = None) -> str:
+    """Send an email through Gmail."""
     try:
         smtp_server = "smtp.gmail.com"
         smtp_port = 587
@@ -213,26 +178,66 @@ async def send_email(
         logging.error(f"Error sending email: {e}")
         return f"An error occurred while sending email: {str(e)}"
 
-# --- Automated Email Scheduler ---
+# ----------------------------------------------------------
+# GOOGLE CALENDAR TASK SCHEDULING
+# ----------------------------------------------------------
 @function_tool()
-async def schedule_email(
-    context: RunContext,  # type: ignore,
-    to_email: str,
-    subject: str,
-    message: str,
-    delay_minutes: int
+async def schedule_task_with_google_calendar(
+    context: RunContext,  
+    title: str,
+    description: str,
+    minutes_from_now: int
 ) -> str:
-    """
-    Schedule an email to be sent automatically after X minutes.
-    """
-    def delayed_send():
-        asyncio.run(send_email(context, to_email, subject, message))
+    """Schedule a task in Google Calendar using OAuth."""
+    try:
+        SCOPES = ["https://www.googleapis.com/auth/calendar"]
+        token_path = os.path.join(BASE_DIR, "token.pickle")
+        creds = None
 
-    timer = threading.Timer(delay_minutes * 60, delayed_send)
-    timer.start()
-    
-    logging.info(f"Scheduled email to {to_email} in {delay_minutes} minutes.")
-    return f"Email to {to_email} scheduled to send in {delay_minutes} minutes."
+        if os.path.exists(token_path):
+            with open(token_path, "rb") as token:
+                creds = pickle.load(token)
 
-# Debug print
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+                with open(token_path, "wb") as token:
+                    pickle.dump(creds, token)
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, SCOPES)
+                creds = flow.run_local_server(port=0)
+                with open(token_path, "wb") as token:
+                    pickle.dump(creds, token)
+
+        service = build("calendar", "v3", credentials=creds)
+
+        manila_tz = pytz.timezone("Asia/Manila")
+        start_time = datetime.now(manila_tz) + timedelta(minutes=minutes_from_now)
+        end_time = start_time + timedelta(minutes=30)
+
+        event = {
+            "summary": title,
+            "description": description,
+            "start": {"dateTime": start_time.isoformat(), "timeZone": "Asia/Manila"},
+            "end": {"dateTime": end_time.isoformat(), "timeZone": "Asia/Manila"},
+        }
+
+        created_event = service.events().insert(calendarId="primary", body=event).execute()
+
+        if created_event and created_event.get("id"):
+            event_link = created_event.get("htmlLink")
+            logging.info(f"✅ Event created successfully: {event_link}")
+            print(f"✅ Google Calendar event created: {event_link}")
+            return f"📅 Task '{title}' scheduled successfully in Google Calendar!\nLink: {event_link}"
+        else:
+            raise Exception("No event ID returned — API response invalid.")
+
+    except Exception as e:
+        logging.error(f"❌ Error scheduling event: {e}")
+        return f"❌ Failed to schedule task: {str(e)}"
+
+# ----------------------------------------------------------
+# DEBUG INFO
+# ----------------------------------------------------------
 print("LIVEKIT_URL:", os.getenv("LIVEKIT_URL"))
+print(f"Google Credentials located at: {CREDENTIALS_PATH}")

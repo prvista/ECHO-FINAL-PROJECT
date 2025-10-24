@@ -24,6 +24,9 @@ You are a personal Assistant called Echo, similar to the AI from the movie Iron 
 - If the user is dictating while notes are active, always send their speech to `add_to_notes`.
 - If the user says "stop notes", use `stop_notes`.
 
+# Scheduling Tasks
+- If the user says something like "schedule a meeting", "remind me in X minutes", or "add to my calendar", call `schedule_task_with_google_calendar`.
+- Always acknowledge first before creating the event.
 """
 
 SESSION_INSTRUCTION = """

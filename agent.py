@@ -34,9 +34,10 @@ from tools import (
     search_web,
     send_email,
     open_app,
-    set_reminder,
     greet_user,
+    schedule_task_with_google_calendar,  # ✅ Replaced set_reminder
 )
+
 
 class Assistant(Agent):
     def __init__(self) -> None:
@@ -51,15 +52,13 @@ class Assistant(Agent):
                 search_web,
                 send_email,
                 open_app,
-                set_reminder,
                 greet_user,
+                schedule_task_with_google_calendar,  # ✅ Added Google Calendar scheduler
             ],
         )
 
     async def on_audio(self, audio_data, session: AgentSession):
-        """
-        Handle voice commands and respond intelligently.
-        """
+        """Handle voice commands and respond intelligently."""
         try:
             command_text = await google.beta.realtime.realtime_transcribe(audio_data)
             print("[DEBUG] User said:", command_text)
@@ -78,8 +77,8 @@ class Assistant(Agent):
             elif "weather" in cmd_lower:
                 response = "Check! Getting the weather."
                 await session.speak(response)
-                city = cmd_lower.replace("weather in ", "")
-                tool_result = await get_weather(None, city)
+                city = cmd_lower.replace("weather in ", "").strip()
+                tool_result = await get_weather(None, city or "Manila")
                 print("[TOOL RESULT]", tool_result)
 
             elif "search for" in cmd_lower:
@@ -98,23 +97,30 @@ class Assistant(Agent):
                     subj_index = parts.index("subject") + 1
                     msg_index = parts.index("message") + 1
                     to_email = parts[to_index]
-                    subject = " ".join(parts[subj_index:msg_index-1])
+                    subject = " ".join(parts[subj_index:msg_index - 1])
                     message = " ".join(parts[msg_index:])
                     tool_result = await send_email(None, to_email, subject, message)
                     print("[TOOL RESULT]", tool_result)
                 except Exception:
                     print("[ERROR] Failed to parse email command")
 
-            elif "remind me to" in cmd_lower:
-                response = "Will do, setting your reminder."
+            # ✅ New Google Calendar scheduling command
+            elif "schedule" in cmd_lower or "remind me" in cmd_lower:
+                response = "Got it! Scheduling that in your Google Calendar."
                 await session.speak(response)
                 try:
-                    task_part = cmd_lower.split(" in ")[0].replace("remind me to ", "")
-                    minutes = int(cmd_lower.split(" in ")[1].replace(" minutes", ""))
-                    tool_result = await set_reminder(None, task_part, minutes)
-                    print("[TOOL RESULT]", tool_result)
-                except Exception:
-                    print("[ERROR] Failed to parse reminder command")
+                    # Example voice command: "schedule meeting in 10 minutes"
+                    if " in " in cmd_lower and " minutes" in cmd_lower:
+                        title_part = cmd_lower.split(" in ")[0].replace("schedule", "").replace("remind me to", "").strip()
+                        minutes = int(cmd_lower.split(" in ")[1].replace(" minutes", "").strip())
+                        tool_result = await schedule_task_with_google_calendar(None, title_part, title_part, minutes)
+                        print("[TOOL RESULT]", tool_result)
+                        await session.speak("Event successfully added to Google Calendar, Sir.")
+                    else:
+                        await session.speak("Please specify the time, like 'in 10 minutes'.")
+                except Exception as e:
+                    print("[ERROR] Failed to parse schedule command:", e)
+                    await session.speak("I couldn’t set that schedule, Sir.")
 
             elif "hello" in cmd_lower or "hi" in cmd_lower:
                 response = await greet_user(None)
