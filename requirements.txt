@@ -8,3 +8,9 @@ duckduckgo-search
 langchain_community
 requests
 python-dotenv
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
+pytz
+aiohttp
