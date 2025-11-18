@@ -2,6 +2,7 @@ import os
 import logging
 import asyncio
 from dotenv import load_dotenv
+import threading
 
 # 🧹 Clear invalid proxy variables (like skooltech.com)
 for var in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "PROXY"]:
@@ -37,6 +38,14 @@ from tools import (
     greet_user,
     schedule_task_with_google_calendar,  # ✅ Replaced set_reminder
 )
+
+
+from gesture_powerpoint import gesture_controller
+def run_gesture_loop():
+    asyncio.run(gesture_controller())
+
+threading.Thread(target=run_gesture_loop, daemon=True).start()
+
 
 
 class Assistant(Agent):

@@ -1,3 +1,7 @@
+opencv-python
+mediapipe
+pyautogui
+psutil
 livekit-agents
 livekit-plugins-openai
 livekit-plugins-silero
@@ -14,3 +18,5 @@ google-auth-httplib2
 google-api-python-client
 pytz
 aiohttp
+PyOpenGL
+PyOpenGL_accelerate
